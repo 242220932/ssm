@@ -1,5 +1,3 @@
-import java.io.*;
-
 /**
  * Test class for IStore Backup System
  * Demonstrates backup and restore functionality

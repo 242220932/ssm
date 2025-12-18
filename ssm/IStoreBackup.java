@@ -1,6 +1,7 @@
 import java.io.*;
 import java.nio.file.*;
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.zip.*;
 
@@ -14,7 +15,7 @@ import java.util.zip.*;
 public class IStoreBackup {
     private static final String BACKUP_DIR = "backups";
     private static final String DATA_DIR = ".";
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss");
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
     
     /**
      * Create a backup of the current istore data
@@ -29,38 +30,37 @@ public class IStoreBackup {
             }
             
             // Generate backup filename with timestamp
-            String timestamp = DATE_FORMAT.format(new Date());
+            String timestamp = LocalDateTime.now().format(DATE_FORMAT);
             String backupFileName = BACKUP_DIR + "/istore_backup_" + timestamp + ".zip";
             
-            // Create zip file for backup
-            FileOutputStream fos = new FileOutputStream(backupFileName);
-            ZipOutputStream zos = new ZipOutputStream(fos);
-            
-            // Backup all data files
-            File dataDir = new File(DATA_DIR);
-            File[] files = dataDir.listFiles(new FileFilter() {
-                @Override
-                public boolean accept(File file) {
-                    // Backup .java, .log, .dat, .db files, exclude backup directory
-                    String name = file.getName();
-                    return file.isFile() && !name.equals(backupFileName) &&
-                           (name.endsWith(".java") || name.endsWith(".log") || 
-                            name.endsWith(".dat") || name.endsWith(".db") ||
-                            name.endsWith(".txt") || name.endsWith(".properties"));
+            // Create zip file for backup using try-with-resources
+            final String backupFileNameFinal = new File(backupFileName).getName();
+            try (FileOutputStream fos = new FileOutputStream(backupFileName);
+                 ZipOutputStream zos = new ZipOutputStream(fos)) {
+                
+                // Backup all data files
+                File dataDir = new File(DATA_DIR);
+                File[] files = dataDir.listFiles(new FileFilter() {
+                    @Override
+                    public boolean accept(File file) {
+                        // Backup .java, .log, .dat, .db files, exclude backup directory
+                        String name = file.getName();
+                        return file.isFile() && !name.equals(backupFileNameFinal) &&
+                               (name.endsWith(".java") || name.endsWith(".log") || 
+                                name.endsWith(".dat") || name.endsWith(".db") ||
+                                name.endsWith(".txt") || name.endsWith(".properties"));
+                    }
+                });
+                
+                if (files != null) {
+                    for (File file : files) {
+                        addToZip(file, zos);
+                    }
                 }
-            });
-            
-            if (files != null) {
-                for (File file : files) {
-                    addToZip(file, zos);
-                }
+                
+                System.out.println("Backup created successfully: " + backupFileName);
+                return backupFileName;
             }
-            
-            zos.close();
-            fos.close();
-            
-            System.out.println("Backup created successfully: " + backupFileName);
-            return backupFileName;
             
         } catch (IOException e) {
             System.err.println("Error creating backup: " + e.getMessage());
@@ -90,33 +90,31 @@ public class IStoreBackup {
             }
             tempDirFile.mkdirs();
             
-            // Extract backup to temporary directory
-            FileInputStream fis = new FileInputStream(backupFile);
-            ZipInputStream zis = new ZipInputStream(fis);
-            ZipEntry entry;
-            
-            while ((entry = zis.getNextEntry()) != null) {
-                File outFile = new File(tempDir + "/" + entry.getName());
+            // Extract backup to temporary directory using try-with-resources
+            try (FileInputStream fis = new FileInputStream(backupFile);
+                 ZipInputStream zis = new ZipInputStream(fis)) {
                 
-                if (entry.isDirectory()) {
-                    outFile.mkdirs();
-                } else {
-                    // Create parent directories if needed
-                    outFile.getParentFile().mkdirs();
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    File outFile = new File(tempDir + "/" + entry.getName());
                     
-                    FileOutputStream fos = new FileOutputStream(outFile);
-                    byte[] buffer = new byte[1024];
-                    int length;
-                    while ((length = zis.read(buffer)) > 0) {
-                        fos.write(buffer, 0, length);
+                    if (entry.isDirectory()) {
+                        outFile.mkdirs();
+                    } else {
+                        // Create parent directories if needed
+                        outFile.getParentFile().mkdirs();
+                        
+                        try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                            byte[] buffer = new byte[1024];
+                            int length;
+                            while ((length = zis.read(buffer)) > 0) {
+                                fos.write(buffer, 0, length);
+                            }
+                        }
                     }
-                    fos.close();
+                    zis.closeEntry();
                 }
-                zis.closeEntry();
             }
-            
-            zis.close();
-            fis.close();
             
             // Move restored files to data directory
             File[] restoredFiles = tempDirFile.listFiles();
@@ -127,7 +125,9 @@ public class IStoreBackup {
                     if (destFile.exists()) {
                         destFile.delete();
                     }
-                    file.renameTo(destFile);
+                    if (!file.renameTo(destFile)) {
+                        throw new IOException("Failed to move file: " + file.getName());
+                    }
                 }
             }
             
@@ -207,18 +207,18 @@ public class IStoreBackup {
      * Add a file to the zip archive
      */
     private void addToZip(File file, ZipOutputStream zos) throws IOException {
-        FileInputStream fis = new FileInputStream(file);
-        ZipEntry zipEntry = new ZipEntry(file.getName());
-        zos.putNextEntry(zipEntry);
-        
-        byte[] buffer = new byte[1024];
-        int length;
-        while ((length = fis.read(buffer)) > 0) {
-            zos.write(buffer, 0, length);
+        try (FileInputStream fis = new FileInputStream(file)) {
+            ZipEntry zipEntry = new ZipEntry(file.getName());
+            zos.putNextEntry(zipEntry);
+            
+            byte[] buffer = new byte[1024];
+            int length;
+            while ((length = fis.read(buffer)) > 0) {
+                zos.write(buffer, 0, length);
+            }
+            
+            zos.closeEntry();
         }
-        
-        fis.close();
-        zos.closeEntry();
     }
     
     /**
